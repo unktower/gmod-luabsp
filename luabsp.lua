@@ -134,7 +134,7 @@ local function vertices_from_planes( planes )
     local verts = {}
 
     for i=1, #planes do
-        local N1 = planes[i];
+        local N1 = planes[i]
 
         for j=i+1, #planes do
             local N2 = planes[j]
@@ -272,7 +272,22 @@ do
         [LUMP_VISIBILITY] = -- Compressed visibility bit arrays
             function(fl, lump_data) end,
         [LUMP_NODES] = -- BSP tree nodes
-            function(fl, lump_data) end,
+            function(fl, lump_data) 
+                lump_data.data = {}
+                lump_data.size = lump_data.filelen / 32
+                for i=0, lump_data.size - 1 do
+                    lump_data.data[i] = {
+                        planenum = fl:ReadLong(), -- index into plane array
+                        children = { fl:ReadLong(), fl:ReadLong() }, -- negative numbers are -(leafs + 1), not nodes
+                        mins = Vector(  fl:ReadShort(), fl:ReadShort(), fl:ReadShort() ), -- for frustum culling
+                        maxs = Vector(  fl:ReadShort(), fl:ReadShort(), fl:ReadShort() ),
+                        firstface = unsigned( fl:ReadShort(), 2 ),
+                        numfacesu = unsigned( fl:ReadShort(), 2 ),
+                        area = fl:ReadShort(), -- If all leaves below this node are in the same area, then this is the area index. If not, this is -1.
+                    }
+                    fl:ReadShort() -- pad to 32 bytes length
+                end
+            end,
         [LUMP_TEXINFO] = -- Face texture array
             function(fl, lump_data)
                 lump_data.data = {}
@@ -288,7 +303,7 @@ do
                             { x = fl:ReadFloat(), y = fl:ReadFloat(), z = fl:ReadFloat(), offset = fl:ReadFloat()},
                         },
                         flags = fl:ReadLong(),
-                        textdata = fl:ReadLong(),
+                        texdata = fl:ReadLong(),
                     }
                 end
             end,
@@ -334,7 +349,32 @@ do
         [LUMP_OCCLUSION] = -- Occlusion polygons and vertices
             function(fl, lump_data) end,
         [LUMP_LEAFS] = -- BSP tree leaf nodes
-            function(fl, lump_data) end,
+            function(fl, lump_data) 
+                lump_data.data = {}
+                lump_data.size = lump_data.filelen / 30
+                for i=0, lump_data.size - 1 do
+                    local data = {
+                        contents = fl:ReadLong(), -- OR of all brushes (not needed?)
+                        cluster = fl:ReadShort(), -- cluster this leaf is in
+                        flags = fl:ReadShort(), -- area this leaf is in and flags 
+                        mins = Vector( fl:ReadShort(), fl:ReadShort(), fl:ReadShort() ), -- for frustum culling
+                        maxs = Vector( fl:ReadShort(), fl:ReadShort(), fl:ReadShort() ),
+                        firstleafface = unsigned( fl:ReadShort(), 2 ), -- index into leaffaces
+                        numleaffaces = unsigned( fl:ReadShort(), 2 ),
+                        firstleafbrush = unsigned( fl:ReadShort(), 2 ), -- index into leafbrushes
+                        numleafbrushes = unsigned( fl:ReadShort(), 2 ),
+                        leafWaterDataID = fl:ReadShort(),
+                    }
+
+                    data.area = bit.band(data.flags, 0x7F)
+                    data.flags = bit.band(bit.rshift(data.flags, 9), 0x1FF)
+                    lump_data.data[i] = data
+                    fl:Read(2) -- padding
+                    
+                    -- TODO: for maps of version 19 or lower uncomment this block
+                    -- fl:Read(26) -- ambientLighting and padding
+                end
+            end,
         [LUMP_FACEIDS] = -- Correlates between dfaces and Hammer face IDs. Also used as random seed for detail prop placement.
             function(fl, lump_data) end,
         [LUMP_EDGES] = -- Edge array
@@ -357,13 +397,38 @@ do
                 end
             end,
         [LUMP_MODELS] = -- Brush models (geometry of brush entities)
-            function(fl, lump_data) end,
+            function(fl, lump_data) 
+                lump_data.data = {}
+                lump_data.size = lump_data.filelen / 48
+                for i=0, lump_data.size - 1 do
+                    lump_data.data[i] = {
+                        mins = Vector( fl:ReadFloat(), fl:ReadFloat(), fl:ReadFloat() ), -- bounding box
+                        maxs = Vector( fl:ReadFloat(), fl:ReadFloat(), fl:ReadFloat() ),
+                        origin = Vector( fl:ReadFloat(), fl:ReadFloat(), fl:ReadFloat() ), -- for sounds or lights
+                        headnode = fl:ReadLong(), -- index into node array
+                        firstface = fl:ReadLong(), -- index into face array
+                        numfaces = fl:ReadLong(),
+                    }
+                end
+            end,
         [LUMP_WORLDLIGHTS] = -- Internal world lights converted from the entity lump
             function(fl, lump_data) end,
         [LUMP_LEAFFACES] = -- Index to faces in each leaf
-            function(fl, lump_data) end,
+            function(fl, lump_data) 
+                lump_data.data = {}
+                lump_data.size = lump_data.filelen / 2
+                for i=0, lump_data.size - 1 do
+                    lump_data.data[i] = unsigned( fl:ReadShort(), 2 )
+                end
+            end,
         [LUMP_LEAFBRUSHES] = -- Index to brushes in each leaf
-            function(fl, lump_data) end,
+            function(fl, lump_data) 
+                lump_data.data = {}
+                lump_data.size = lump_data.filelen / 2
+                for i=0, lump_data.size - 1 do
+                    lump_data.data[i] = unsigned( fl:ReadShort(), 2 )
+                end
+            end,
         [LUMP_BRUSHES] = -- Brush array
             function(fl, lump_data)
                 lump_data.data = {}
@@ -471,7 +536,7 @@ do
                 local offset = 0
                 for k, v in pairs(data) do
                     lump_data.data[offset] = v
-                    offset = offset + 1 +  #v
+                    offset = offset + 1 + #v
                 end
             end,
         [LUMP_TEXDATA_STRING_TABLE] = -- Index array into texdata string data
@@ -757,7 +822,6 @@ do
 
                 local texinfo = self.lumps[LUMP_TEXINFO]["data"][render_data.texinfo]
 
-
                 local ref = Vector(0,0,-1)
                 if math.abs( norm:Dot( Vector(0,0,1) ) ) == 1 then
                     ref = Vector(0,1,0)
@@ -798,7 +862,6 @@ do
         return brushes
     end
 end
-
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
